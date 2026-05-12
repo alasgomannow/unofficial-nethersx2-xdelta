@@ -1,0 +1,73 @@
+name: Auto NetherSX2 xdelta builder
+
+permissions:
+  contents: write
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y xdelta3 wget curl git
+
+      - name: Get latest version + skip if already released
+        id: check
+        run: |
+          GitVersion=$(basename $(curl -Ls -o /dev/null -w %{url_effective} https://github.com/Trixarian/NetherSX2-patch/releases/latest))
+
+          echo "GitVersion=$GitVersion" >> $GITHUB_ENV
+
+          TITLE="NetherSX2 Patch $GitVersion"
+
+          case "$GitVersion" in
+            *[ab]) TITLE+=" Dev Build" ;;
+            *n)    TITLE+=" Net Dev Build" ;;
+          esac
+
+          echo "TITLE=$TITLE" >> $GITHUB_ENV
+
+          TAG="nether-$GitVersion"
+
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG$"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+
+            echo "::notice title=NetherSX2::No new release detected — nothing generated."
+            echo "## NetherSX2 Update Check" >> $GITHUB_STEP_SUMMARY
+            echo "No new release found." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download APK + generate xdelta
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          LatestApk="https://github.com/Trixarian/NetherSX2-patch/releases/download/$GitVersion/NetherSX2-v$GitVersion-4248.apk"
+
+          curl -L "$LatestApk" -o nether.apk
+
+          xdelta3 -e -s base/AetherSX2.apk nether.apk nethersx2.xdelta
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: nether-${{ env.GitVersion }}
+          name: ${{ env.TITLE }}
+          body: |
+            Patch generated from the official NetherSX2 release:
+
+            https://github.com/Trixarian/NetherSX2-patch/releases/tag/${{ env.GitVersion }}
+
+            Apply this xdelta against the correct AetherSX2 base APK.
+          files: nethersx2.xdelta
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
